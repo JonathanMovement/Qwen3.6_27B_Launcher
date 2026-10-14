@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Model weights and llama.cpp binaries - huge, re-downloadable
+LocalLLM/
+*.gguf
+
+# Personal data: your conversations and project contents
+chats/
+projects/
+
+# SearXNG config contains a generated secret key
+SearXNG/searxng/settings.yml
+
+# Editor settings
+.vscode/
+
+# Scratch files
+test.py
+testing.py
