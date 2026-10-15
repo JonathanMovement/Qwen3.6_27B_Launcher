@@ -2,15 +2,15 @@
 __pycache__/
 *.pyc
 
-# Model weights and llama.cpp binaries - huge, re-downloadable
+# Model weights and llama.cpp binaries
 LocalLLM/
 *.gguf
 
-# Personal data: your conversations and project contents
+# Personal data: conversations + content
 chats/
 projects/
 
-# SearXNG config contains a generated secret key
+# SearXNG config
 SearXNG/searxng/settings.yml
 
 # Editor settings

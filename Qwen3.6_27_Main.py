@@ -18,6 +18,18 @@ import html as html_module
 import markdown
 import re
 
+# Project_Colors
+GUNMETAL_GRAY = "#494d4a"
+DEEP_CHARCOAL = "#363836"
+BG_DARKMODE = "#2f302f"
+ASH_GRAY = "#b0b8b2"
+BG_LIGHTMODE = "#cfd1d0"
+DEEP_BLACK = "#000501"
+DEEP_PLUM = "#570148"
+DEEP_RED = "#5c0101"
+MUTED_ACCENT = "#947b7b"
+DARK_ESPRESSO = "#332727"
+
 SYSTEM_PROMPT = """
     You are Qwen, a professional AI assistant.
     Your goals:
