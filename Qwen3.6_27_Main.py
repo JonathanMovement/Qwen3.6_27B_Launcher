@@ -31,6 +31,8 @@ MUTED_ACCENT = "#947b7b"
 DARK_ESPRESSO = "#332727"
 BG_DARKMODE2 = "#111317"
 MIDNIGHT_BLACK = "#191c21"
+SLATE_GRAY = "#7d8580"
+SOFT_PLUM = "#b07aa6"
 
 SYSTEM_PROMPT = """
     You are Qwen, a professional AI assistant.
@@ -203,40 +205,75 @@ class Sidebar(QWidget):
         self.chat_deleted.emit(chat_id)
 
 class ChatArea(QWidget):
-    STYLE = """
-        body { font-family: "Segoe UI", "Segoe UI Emoji", sans-serif;
-               font-size: 14px; }
-        pre { font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
-              font-size: 13px; background-color: #f5f5f5; }
-        code { font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
-               background-color: #f0f0f0; }
-        table { border-collapse: collapse; border-style: solid; border-color: #cccccc; margin-top: 6px; margin-bottom: 6px; }
-        th { background-color: #f0f0f0; font-weight: bold; }
-        th, td { border-width: 1px; border-style: solid; border-color: #cccccc; padding: 6px 10px; }
-        .role { font-weight: bold; }
-        .user { color: #1a5fb4; }
-        .assistant { color: #2a7a2a; }
-        .system { color: #888888; font-style: italic; }
-    """
-
-    def __init__(self):
+    def __init__(self, dark=True):
         super().__init__()
+
+        self.dark = dark
+        self.messages = []
 
         self.chat_display = QTextBrowser()
         self.chat_display.setReadOnly(True)
         self.chat_display.setOpenExternalLinks(True)
-        self.chat_display.document().setDefaultStyleSheet(self.STYLE)
+        self.chat_display.document().setDefaultStyleSheet(self.build_style())
 
-        self.messages = []
+        self.build_markdown()
+        self.initUI()
+
+    def build_style(self):
+        if self.dark:
+            text = ASH_GRAY
+            code_bg = BG_DARKMODE2
+            inline_bg = DEEP_CHARCOAL
+            border = GUNMETAL_GRAY
+            header_bg = DEEP_CHARCOAL
+            user = SOFT_PLUM
+            assistant = MUTED_ACCENT
+            system = SLATE_GRAY
+            link = SOFT_PLUM
+        else:
+            text = DEEP_BLACK
+            code_bg = BG_LIGHTMODE
+            inline_bg = BG_LIGHTMODE
+            border = GUNMETAL_GRAY
+            header_bg = BG_LIGHTMODE
+            user = DEEP_PLUM
+            assistant = DEEP_RED
+            system = GUNMETAL_GRAY
+            link = DEEP_PLUM
+
+        return f"""
+            body {{ font-family: "Segoe UI", "Segoe UI Emoji", sans-serif; font-size: 14px; color: {text}; }}
+            pre {{ font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 13px; background-color: {code_bg}; color: {text}; }}
+            code {{ font-family: "Cascadia Mono", Consolas, "Courier New", monospace; background-color: {inline_bg}; }}
+            pre code {{ background-color: {code_bg}; }}
+            table {{ border-collapse: collapse; border-style: solid; border-color: {border}; margin-top: 6px; margin-bottom: 6px; }}
+            th {{ background-color: {header_bg}; font-weight: bold; }}
+            th, td {{ border-width: 1px; border-style: solid; border-color: {border}; padding: 6px 10px; }}
+            a {{ color: {link}; }}
+            .role {{ font-weight: bold; }}
+            .user {{ color: {user}; }}
+            .assistant {{ color: {assistant}; }}
+            .system {{ color: {system}; font-style: italic; }}
+        """
+
+    def build_markdown(self):
+        if self.dark:
+            pygments_style = "monokai"
+        else:
+            pygments_style = "friendly"
 
         self.md = markdown.Markdown(
             extensions=["fenced_code", "codehilite", "tables", "sane_lists"],
             extension_configs={
-                "codehilite": {"noclasses": True, "pygments_style": "friendly"}
+                "codehilite": {"noclasses": True, "pygments_style": pygments_style}
             }
         )
 
-        self.initUI()
+    def set_theme(self, dark):
+        self.dark = dark
+        self.chat_display.document().setDefaultStyleSheet(self.build_style())
+        self.build_markdown()
+        self.render()
 
     def initUI(self):
         layout = QVBoxLayout()
@@ -563,6 +600,7 @@ class InferenceThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.dark_mode = True
 
         self.setWindowTitle("Local LLM")
         self.resize(1600, 900)
@@ -571,6 +609,7 @@ class MainWindow(QMainWindow):
         self.top_bar = TopBar()
         self.sidebar = Sidebar()
         self.chat_area = ChatArea()
+        self.chat_areas = [self.chat_area]
         self.input_bar = InputBar()
         self.settings_window = SettingsWindow()
         self.projects_window = ProjectsWindow(self) # Link to projects.py
@@ -610,7 +649,6 @@ class MainWindow(QMainWindow):
         self.start_llama_server()
         self.initUI()
 
-        self.dark_mode = True
         self.build_styles()
         self.apply_theme()
 
@@ -654,6 +692,15 @@ class MainWindow(QMainWindow):
             self.top_bar.theme_button.setText("Dark Theme")
 
         QApplication.instance().setStyleSheet(self.base_style + theme)
+
+        alive = []
+        for area in self.chat_areas:
+            try:
+                area.set_theme(self.dark_mode)
+                alive.append(area)
+            except RuntimeError:
+                pass
+        self.chat_areas = alive
 
     def toggle_theme(self):
         self.dark_mode = not self.dark_mode
@@ -1222,7 +1269,9 @@ class MainWindow(QMainWindow):
         self.restart_server()
 
     def new_chat_area(self): # method to open ChatArea() in projects_window.py
-        return ChatArea()
+        area = ChatArea(self.dark_mode)
+        self.chat_areas.append(area)
+        return area
 
     def new_input_bar(self): # method to open InputBar() in projects_window.py
         return InputBar()
