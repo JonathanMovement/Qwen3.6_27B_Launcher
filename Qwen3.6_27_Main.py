@@ -29,6 +29,8 @@ DEEP_PLUM = "#570148"
 DEEP_RED = "#5c0101"
 MUTED_ACCENT = "#947b7b"
 DARK_ESPRESSO = "#332727"
+BG_DARKMODE2 = "#111317"
+MIDNIGHT_BLACK = "#191c21"
 
 SYSTEM_PROMPT = """
     You are Qwen, a professional AI assistant.
@@ -608,6 +610,55 @@ class MainWindow(QMainWindow):
         self.start_llama_server()
         self.initUI()
 
+        self.dark_mode = True
+        self.build_styles()
+        self.apply_theme()
+
+    # UI palette
+    def build_styles(self):
+        self.base_style = """
+            QWidget {font-family: "Segoe UI"; font-size: 13px;}
+            QPushButton {border-radius: 6px; padding: 6px 12px;}
+            QLineEdit {border-radius: 6px; padding: 6px 8px;}
+            QTextEdit, QTextBrowser, QListWidget {border-radius: 8px;}
+            QCheckBox {spacing: 6px;}
+    """
+        # Themes
+        self.dark_theme = f"""
+            QWidget {{background-color: {BG_DARKMODE2}; color: {ASH_GRAY};}}
+            QPushButton {{background-color: {MIDNIGHT_BLACK}; border: 1px solid {GUNMETAL_GRAY};}}
+            QPushButton:hover {{background-color: {DEEP_PLUM}; }}
+            QPushButton:pressed {{background-color: {DARK_ESPRESSO};}}
+            QPushButton:disabled {{background-color: {DEEP_CHARCOAL}; color: {GUNMETAL_GRAY};}}
+            QLineEdit, QTextEdit, QTextBrowser, QListWidget {{background-color: {MIDNIGHT_BLACK}; border: 1px solid {GUNMETAL_GRAY};}}
+            QLineEdit:focus, QTextEdit:focus {{border: 1px solid {MUTED_ACCENT};}}
+            QScrollArea {{border: 1px solid {GUNMETAL_GRAY};}}
+    """
+        self.light_theme = f"""
+            QWidget {{background-color: {BG_LIGHTMODE}; color: {DEEP_BLACK};}}
+            QPushButton {{background-color: {ASH_GRAY}; border: 1px solid {GUNMETAL_GRAY};}}
+            QPushButton:hover {{background-color: {MUTED_ACCENT}; }}
+            QPushButton:pressed {{background-color: {GUNMETAL_GRAY}; color: {ASH_GRAY};}}
+            QPushButton:disabled {{background-color: {BG_LIGHTMODE}; color: {GUNMETAL_GRAY};}}
+            QLineEdit, QTextEdit, QTextBrowser, QListWidget {{background-color: {ASH_GRAY}; border: 1px solid {GUNMETAL_GRAY};}}
+            QLineEdit:focus, QTextEdit:focus {{border: 1px solid {DEEP_PLUM};}}
+            QScrollArea {{border: 1px solid {GUNMETAL_GRAY};}}            
+    """
+
+    def apply_theme(self):
+        if self.dark_mode:
+            theme = self.dark_theme
+            self.top_bar.theme_button.setText("Light Theme")
+        else:
+            theme = self.light_theme
+            self.top_bar.theme_button.setText("Dark Theme")
+
+        QApplication.instance().setStyleSheet(self.base_style + theme)
+
+    def toggle_theme(self):
+        self.dark_mode = not self.dark_mode
+        self.apply_theme()
+
     def start_searxng(self):
             docker = shutil.which("docker")
     
@@ -676,6 +727,8 @@ class MainWindow(QMainWindow):
         self.top_bar.vision_button.toggled.connect(self.toggle_vision)
         self.input_bar.input_box.image_pasted.connect(self.attach_pasted_image)
         self.top_bar.projects_button.clicked.connect(self.projects_window.show)
+        # Theme ----
+        self.top_bar.theme_button.clicked.connect(self.toggle_theme)
 
         if not self.mmproj_available:
             self.top_bar.vision_button.setEnabled(False)
