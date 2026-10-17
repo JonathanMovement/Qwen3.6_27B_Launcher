@@ -328,44 +328,6 @@ class ProjectChatWindow(QMainWindow):
         self.input_bar.attachment_label.setVisible(True)
         self.input_bar.clear_attachments_button.setVisible(True)
 
-    # Web context: Send & Receive
-    def build_web_context(self, query):
-        try:
-            results = self.host.searx.search(query)
-        except Exception as e:
-            self.chat_area.add_message(
-                "system", f"Web search failed - {type(e).__name__}: {e}"
-            )
-            self.last_web_sources = []
-            return ""
-
-        if not results:
-            reason = "no results"
-            failed = self.host.searx.last_unresponsive
-            if failed:
-                names = []
-                for engine in failed:
-                    names.append(f"{engine[0]} ({engine[1]})")
-                reason = "engines failed: " + ", ".join(names)
-            self.chat_area.add_message("system", f"Web search returned nothing - {reason}. Answering without web data")
-            self.last_web_sources = []
-            return ""
-        
-        self.last_web_sources = results
-
-        context = "Internet search results:\n\n"
-        for result in results:
-            context += f"Title: {result['title']}\n"
-            context += f"URL: {result['url']}\n"
-            context += f"Snippet: {result['content']}\n\n"
-        context += (
-            "Base your answer on these results. If they do not cover the question, "
-            "say that you could not find current information rather than stating "
-            "that something does not exist. Distinguish professional critic reviews "
-            "from player or user reviews, and say which ones the results cover.\n"
-        )
-        return context
-
     def send_message(self):
         self.last_web_sources = []
         prompt = self.input_bar.input_box.text()
@@ -424,10 +386,11 @@ class ProjectChatWindow(QMainWindow):
                 })
             messages[-1] = {"role": "user", "content": content}
 
-        if self.host.top_bar.web_toggle.isChecked():
+        if self.host.top_bar.web_toggle.isChecked(): # Web context: Send & Receive
             query = self.host.rewrite_search_query(data.get("messages", []), prompt)
             self.chat_area.add_message("system", f"Searching: {query}")
-            web_context = self.build_web_context(query)
+            web_context, self.last_web_sources = self.build_web_context(query, self.chat_area)
+            messages.insert(0, {"role": "system", "content": web_context})
             if not web_context:
                 web_context = (
                     "A web search was attempted for this message but returned nothing. "

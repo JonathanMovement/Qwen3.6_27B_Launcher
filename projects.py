@@ -3,10 +3,26 @@ import os
 import shutil
 import uuid
 from PyQt5.QtWidgets import (QDialog, QListWidget, QListWidgetItem, QPushButton, QLabel, 
-                             QVBoxLayout, QHBoxLayout, QMessageBox, QInputDialog, QApplication)
-from PyQt5.QtCore import Qt
+                             QVBoxLayout, QHBoxLayout, QMessageBox, QInputDialog, QWhatsThis)
+from PyQt5.QtCore import Qt, QEvent, QTimer
 
 PROJECTS_DIR = "projects"
+
+PROJECTS_HELP = """
+    <b>Projects</b><br>
+    Each project is its own conversation with its own reference material.
+    <ul>
+    <li><b>Create Project</b> - name a new project. It opens straight away.</li>
+    <li><b>Open</b> or double-click - opens the project's chat window.</li>
+    <li><b>Rename / Delete</b> - select a project first. Delete permanently removes its conversation, instructions and images.</li>
+    </ul>
+    <b>Inside a project</b>
+    <ul>
+    <li><b>Instructions</b> - notes and images the model sees with every message in that project.</li>
+    <li>Each reference image costs about 1100 tokens per message, so keep them few and put most material in notes.</li>
+    <li>Images need <b>Enable Vision</b>. Online mode is switched on from the main window.</li>
+    </ul>
+"""
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
@@ -129,6 +145,7 @@ def remove_image(path):
 class ProjectsWindow(QDialog):
     def __init__(self, host):
         super().__init__(host)
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, True)
         self.host = host
         self.setWindowTitle("Projects")
         self.resize(900, 620)
@@ -244,3 +261,14 @@ class ProjectsWindow(QDialog):
         window.show()
         window.raise_()
         window.activateWindow()
+
+    # Making the QDialog's question mark at the top actually provide instructions
+    def event(self, event):
+        if event.type() == QEvent.EnterWhatsThisMode and self.isActiveWindow():
+            QWhatsThis.leaveWhatsThisMode()
+            QTimer.singleShot(0, self.show_help)
+            return True
+        return super().event(event)
+
+    def show_help(self):
+        QMessageBox.information(self, "How to use Projects", PROJECTS_HELP)

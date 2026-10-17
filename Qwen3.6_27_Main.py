@@ -4,8 +4,9 @@ import json
 import uuid
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton,
                              QLineEdit, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QTextBrowser, 
-                             QDialog, QSlider, QCheckBox, QRadioButton, QButtonGroup, QFileDialog)
-from PyQt5.QtCore import QPropertyAnimation, Qt, QThread, pyqtSignal, QBuffer, QIODevice
+                             QDialog, QSlider, QCheckBox, QRadioButton, QButtonGroup, 
+                             QFileDialog, QWhatsThis, QMessageBox)
+from PyQt5.QtCore import QPropertyAnimation, Qt, QThread, pyqtSignal, QBuffer, QIODevice, QEvent, QTimer
 from PyQt5.QtGui import QIcon, QTextCursor, QImage, QKeySequence
 from searx_client import SearXClient
 from file_loader import load_file, load_image_bytes, UnsupportedFile
@@ -51,6 +52,42 @@ SYSTEM_PROMPT = """
 """
 
 IMAGE_TOKEN_COST = 1100 # matches the --image-min-tokens 1024 floor
+
+WEB_FALLBACK = (
+    "A web search was attempted for this message but returned nothing. "
+    "You have no current information. If the question is about recent "
+    "releases, events or products, say you could not verify it. Never claim "
+    "something does not exist just because you do not recognize it."    
+)
+
+SETTINGS_HELP = """
+    <b>Context Length</b><br>
+    How much of the conversation the model can see at once, counting both your messages and its replies.
+    Higher values let it remember longer chats, but use more VRAM and can push parts of the model onto
+    the CPU, which slows it down. Each attached or reference image uses about 1100 tokens of this budget.
+    <b>8192</b> is a good default.
+    <br><br>
+    <b>Model placement</b>
+    <ul>
+    <li><b>Auto</b> - places as much of the model on the GPU as fits in VRAM, the rest on the CPU.
+    Fastest option on a 5070 card. Recommended.</li>
+    <li><b>Hybrid</b> - you choose how many layers go on the GPU with the GPU Layers slider.
+    Fewer layers leave VRAM free for other programs, but make generation slower.</li>
+    <li><b>CPU Only</b> - runs everything on the processor. Very slow, only useful for testing.</li>
+    </ul>
+    <b>GPU Layers</b><br>
+    Only active in Hybrid mode. The model has 64 layers, so <b>65</b> means everything on the GPU.
+    Setting it higher than your VRAM can hold makes loading fail or slows generation sharply.
+    <br><br>
+    <b>Max Response Tokens</b><br>
+    The longest a single reply can be. This space is reserved out of the context length, so higher
+    values leave less room for conversation history. Use 2048 for normal chat, 4096 for long code.
+    <br><br>
+    <b>Save settings</b><br>
+    Changing context length, model placement or GPU layers restarts the model. Wait for
+    "Model ready" before sending. Max Response Tokens applies immediately, without a restart.
+    Settings can't be changed while a response is generating, and they reset when you close the app.
+"""
 
 def count_tokens(text):
     try:
@@ -376,6 +413,7 @@ class InputBar(QWidget):
 class SettingsWindow(QDialog):
     def __init__(self):
         super().__init__()
+        self.setWindowFlag(Qt.WindowContextHelpButtonHint, True)
 
         self.setWindowTitle("Settings")
         self.resize(400, 200)
@@ -495,6 +533,16 @@ class SettingsWindow(QDialog):
             self.hybrid_radio.setChecked(True)
         else:
             self.cpu_radio.setChecked(True)
+
+    def event(self, event):
+        if event.type() == QEvent.EnterWhatsThisMode and self.isActiveWindow():
+            QWhatsThis.leaveWhatsThisMode()
+            QTimer.singleShot(0, self.show_help)
+            return True
+        return super().event(event)
+
+    def show_help(self):
+        QMessageBox.information(self, "How to use Settings", SETTINGS_HELP)
 
 class ServerStartThread(QThread):
     ready = pyqtSignal()
@@ -1033,17 +1081,10 @@ class MainWindow(QMainWindow):
             messages[-1] = {"role": "user", "content": content}
 
         if self.top_bar.web_toggle.isChecked():
-
-            web_context = self.build_web_context(prompt, target_chat)
-
-            if web_context:
-                messages.insert(
-                    0,
-                    {
-                        "role": "system",
-                        "content": web_context
-                    }
-                )
+            query = self.rewrite_search_query(messages, prompt)
+            self.chat_area.add_message("system", f"Searching: {query}")
+            web_context, self.last_web_sources = self.build_web_context(query, self.chat_area)
+            messages.insert(0, {"role": "system", "content": web_context})
 
         self.inference_thread = InferenceThread(messages, self.model_settings["max_tokens"], target_chat)
         self.inference_thread.result_ready.connect(self.on_response)
@@ -1111,24 +1152,23 @@ class MainWindow(QMainWindow):
 
         return self.message_budget(data["messages"], reserve)
 
-    def build_web_context(self, query, chat_id):
-        search_query = query
+    def build_web_context(self, query, chat_area):
         try:
-            with open(f"chats/{chat_id}.json", "r", encoding="utf8") as f:
-                title = json.load(f).get("title", "")
-            if title and title.lower() not in query.lower():
-                search_query = f"{title} {query}"
-        except Exception:
-            pass
-
-        try:
-            results = self.searx.search(search_query)
+            results = self.searx.search(query)
         except Exception as e:
             self.chat_area.add_message("system", f"Web search failed - {type(e).__name__}: {e}")
-            self.last_web_sources = []
-            return ""
+            return WEB_FALLBACK, []
         
-        self.last_web_sources = results
+        if not results:
+            reason = "no results"
+            failed = self.searx.last_unresponsive
+            if failed:
+                names = []
+                for engine in failed:
+                    names.append(f"{engine[0]} ({engine[1]})")
+                reason = "engines failed: " + ", ".join(names)
+            chat_area.add_message("system", f"Web search returned nothing - {reason}. Answering without web data.")
+            return WEB_FALLBACK, []
 
         context = "Internet search results:\n\n"
         for result in results:
@@ -1136,15 +1176,13 @@ class MainWindow(QMainWindow):
             context += f"URL: {result['url']}\n"
             context += f"Snippet: {result['content']}\n\n"
         context += (
-            "If these results don't actually address the question, say so directly "
-            "instead of guessing or inventing an explanation. \n"
             "Base your answer on these results. If they do not cover the question, "
             "say that you could not find current information rather than stating "
             "that something does not exist. Distinguish professional critic reviews "
             "from player or user reviews, and say which ones the results cover.\n"
         )
 
-        return context
+        return context, results
     
     def message_budget(self, messages, reserve=0):
         context = self.model_settings["context"]
