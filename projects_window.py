@@ -178,7 +178,7 @@ class ProjectChatWindow(QMainWindow):
 
         self.initUI()
         self.refresh_name()
-        self.sync_from_host()
+        
         if self.host is not None:
             self.load_history()
 
@@ -205,9 +205,7 @@ class ProjectChatWindow(QMainWindow):
         self.instructions_button.clicked.connect(self.open_instructions)
         self.vision_toggle.toggled.connect(self.on_vision_toggled)
 
-        if self.host is not None:
-            self.host.top_bar.vision_button.toggled.connect(self.sync_from_host)
-            self.host.top_bar.web_toggle.toggled.connect(self.sync_from_host)
+        self.connect_host()
 
         self.input_bar.attach_button.clicked.connect(self.attach_files)
         self.input_bar.clear_attachments_button.clicked.connect(self.clear_attachments)
@@ -238,6 +236,13 @@ class ProjectChatWindow(QMainWindow):
         self.vision_toggle.setChecked(self.host.vision_enabled)
         self.vision_toggle.setEnabled(self.host.mmproj_available)
         self.vision_toggle.blockSignals(False)
+
+    def connect_host(self): # closeEvent disconnects these, ProjectsWindow calls this again on reopen
+        if self.host is None:
+            return
+        self.host.top_bar.vision_button.toggled.connect(self.sync_from_host)
+        self.host.top_bar.web_toggle.toggled.connect(self.sync_from_host)
+        self.sync_from_host()
 
     def on_vision_toggled(self, enabled):
         if self.host is None:

@@ -209,6 +209,8 @@ class ProjectsWindow(QDialog):
         project_id = create_project(name.strip() or "Untitled")
         self.refresh(select_id=project_id)
 
+        self.open_project(project_id)
+
     def rename_selected(self):
         project_id = self.selected_id()
         if not project_id:
@@ -226,6 +228,10 @@ class ProjectsWindow(QDialog):
         rename_project(project_id, name.strip() or "Untitled")
         self.refresh(select_id=project_id)
 
+        window = self.open_windows.get(project_id)
+        if window is not None:
+            window.refresh_name()
+
     def delete_selected(self):
         project_id = self.selected_id()
         if not project_id:
@@ -240,6 +246,10 @@ class ProjectsWindow(QDialog):
         )
         if confirm != QMessageBox.Yes:
             return
+        window = self.open_project.pop(project_id, None)
+        if window is not None:
+            window.close() # stops its generation before the files are removed
+
         delete_project(project_id)
         self.refresh()
 
@@ -257,6 +267,9 @@ class ProjectsWindow(QDialog):
         if window is None:
             window = ProjectChatWindow(self.host, project_id)
             self.open_windows[project_id] = window
+        elif not window.isVisible():
+            window.connect_host()
+            window.refresh_name()
 
         window.show()
         window.raise_()
