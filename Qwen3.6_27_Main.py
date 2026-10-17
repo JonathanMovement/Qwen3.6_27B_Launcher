@@ -2,7 +2,7 @@ import sys
 import os
 import json
 import uuid
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton, QTextEdit,
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QPushButton,
                              QLineEdit, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QTextBrowser, 
                              QDialog, QSlider, QCheckBox, QRadioButton, QButtonGroup, QFileDialog)
 from PyQt5.QtCore import QPropertyAnimation, Qt, QThread, pyqtSignal, QBuffer, QIODevice
@@ -14,14 +14,12 @@ import requests
 import subprocess
 import time
 import shutil
-import html as html_module
 import markdown
 import re
 
 # Project_Colors
 GUNMETAL_GRAY = "#494d4a"
 DEEP_CHARCOAL = "#363836"
-BG_DARKMODE = "#2f302f"
 ASH_GRAY = "#b0b8b2"
 BG_LIGHTMODE = "#cfd1d0"
 DEEP_BLACK = "#000501"
@@ -29,7 +27,7 @@ DEEP_PLUM = "#570148"
 DEEP_RED = "#5c0101"
 MUTED_ACCENT = "#947b7b"
 DARK_ESPRESSO = "#332727"
-BG_DARKMODE2 = "#111317"
+BG_DARKMODE = "#111317"
 MIDNIGHT_BLACK = "#191c21"
 SLATE_GRAY = "#7d8580"
 SOFT_PLUM = "#b07aa6"
@@ -102,6 +100,7 @@ class TopBar(QWidget):
 
         self.menu_button = QPushButton("☰")
         self.title_label = QLabel("Local Qwen")
+        self.title_label.setObjectName("appTitle")
         self.projects_button = QPushButton("Projects")
         self.vision_button = QCheckBox("Enable Vision")
         self.vision_button.setChecked(False)
@@ -109,7 +108,6 @@ class TopBar(QWidget):
         self.web_toggle = QCheckBox("Online mode")
         self.web_toggle.setChecked(False)
         self.theme_button = QPushButton("Dark Theme")
-        self.theme_button.setIcon(QIcon("Icons-Pictures\\Dark-Theme.png"))
 
         self.initUI()
 
@@ -134,6 +132,8 @@ class Sidebar(QWidget):
         super().__init__()
 
         self.chat_buttons = {}
+        self.chat_group = QButtonGroup(self)
+        self.chat_group.setExclusive(True)
         self.new_chat_button = QPushButton("New Chat")
         self.new_chat_button.setIcon(QIcon("Icons-Pictures\\new-chat.png"))
 
@@ -174,10 +174,16 @@ class Sidebar(QWidget):
         row_layout.setContentsMargins(4, 2, 4, 2)
         row_layout.setSpacing(4)
         chat_button = QPushButton(title)
+        chat_button.setObjectName("chatItem")
+        chat_button.setCheckable(True)
         chat_button.setFixedWidth(160) # chat button takes more space
         chat_button.setToolTip(title)
-        delete_button = QPushButton("❌")
+        self.chat_group.addButton(chat_button)
+
+        delete_button = QPushButton("✕")
+        delete_button.setObjectName("deleteButton")
         delete_button.setFixedWidth(30) # delete button takes less space
+        delete_button.setToolTip("Delete chat")
 
         row_layout.addWidget(chat_button)
         row_layout.addWidget(delete_button)
@@ -204,6 +210,10 @@ class Sidebar(QWidget):
         self.chat_buttons.pop(chat_id, None)
         self.chat_deleted.emit(chat_id)
 
+    def select_chat(self, chat_id):
+        if chat_id in self.chat_buttons:
+            self.chat_buttons[chat_id].setChecked(True)
+
 class ChatArea(QWidget):
     def __init__(self, dark=True):
         super().__init__()
@@ -222,7 +232,7 @@ class ChatArea(QWidget):
     def build_style(self):
         if self.dark:
             text = ASH_GRAY
-            code_bg = BG_DARKMODE2
+            code_bg = BG_DARKMODE
             inline_bg = DEEP_CHARCOAL
             border = GUNMETAL_GRAY
             header_bg = DEEP_CHARCOAL
@@ -384,7 +394,7 @@ class SettingsWindow(QDialog):
 
         # Model placement
         self.gpu_radio = QRadioButton("Auto (GPU + RAM/CPU)")
-        self.hybrid_radio = QRadioButton("Hybrid (GPU + RAM)")
+        self.hybrid_radio = QRadioButton("Hybrid (Manual GPU layers)")
         self.cpu_radio = QRadioButton("CPU Only")
 
         self.model_group = QButtonGroup()
@@ -399,10 +409,10 @@ class SettingsWindow(QDialog):
         self.gpu_layers_slider = QSlider(Qt.Horizontal)
 
         self.gpu_layers_slider.setMinimum(0)
-        self.gpu_layers_slider.setMaximum(80)
-        self.gpu_layers_slider.setValue(35)
+        self.gpu_layers_slider.setMaximum(65)
+        self.gpu_layers_slider.setValue(48)
 
-        self.gpu_layers_value = QLabel("35")
+        self.gpu_layers_value = QLabel("48")
 
         # Max tokens
         self.tokens_label = QLabel("Max Response Tokens")
@@ -477,7 +487,6 @@ class SettingsWindow(QDialog):
         # Max Tokens
         token_index = self.token_values.index(settings["max_tokens"])
         self.tokens_slider.setValue(token_index)
-        self.update_mode()
 
         # Mode
         if settings["mode"] == "gpu":
@@ -622,7 +631,7 @@ class MainWindow(QMainWindow):
     
         self.server_process = None
         self.attached_files = []
-        self.project_root = r"F:\Python files\Qwen3.6_LocalLLM"
+        self.project_root = os.path.dirname(os.path.abspath(__file__))
         self.mmproj_path = r".\LocalLLM\models\mmproj-F16.gguf"
         self.mmproj_available = os.path.exists(os.path.join(self.project_root, self.mmproj_path))
         self.vision_enabled = False
@@ -641,7 +650,7 @@ class MainWindow(QMainWindow):
 
         self.model_settings = {
             "context": 8192,
-            "gpu_layers": 35,
+            "gpu_layers": 48,
             "max_tokens": 2048,
             "mode": "gpu"
         }
@@ -659,11 +668,39 @@ class MainWindow(QMainWindow):
             QPushButton {border-radius: 6px; padding: 6px 12px;}
             QLineEdit {border-radius: 6px; padding: 6px 8px;}
             QTextEdit, QTextBrowser, QListWidget {border-radius: 8px;}
-            QCheckBox {spacing: 6px;}
+            QCheckBox, QRadioButton {spacing: 6px;}
+
+            /* Scrollbars */
+            QScrollBar:vertical {width: 10px; margin: 0px; border: none;}
+            QScrollBar:horizontal {height: 10px; margin: 0px; border: none;}
+            QScrollBar::handle:vertical {min-height: 30px; border-radius: 3px; margin: 2px;}
+            QScrollBar::handle:horizontal {min-width: 30px; border-radius: 3px; margin: 2px;}
+            QScrollBar::add-line, QScrollBar::sub-line {width: 0px; height: 0px;}
+            QScrollBar::add-page, QScrollBar::sub-page {background: none;}
+
+            /* Checkboxes and radio buttons */
+            QCheckBox::indicator, QRadioButton::indicator {width: 14px; height: 14px;}
+            QCheckBox::indicator {border-radius: 4px;}
+            QRadioButton::indicator {border-radius: 8px;}
+
+            /* Sliders */
+            QSlider::groove:horizontal {height: 4px; border-radius: 2px;}
+            QSlider::sub-page:horizontal {height: 4px; border-radius: 2px;}
+            QSlider::handle:horizontal {width: 14px; height: 14px; margin: -5px 0px; border-radius: 7px;}
+
+            /* Sidebar chat rows */
+            QPushButton#chatItem {text-align: left; padding: 6px 8px; border: none;}
+            QPushButton#deleteButton {padding: 0px; border: none; font-size: 14px;}
+
+            /* Lists, tooltips, title */
+            QListWidget::item {padding: 6px; border-radius: 4px;}
+            QToolTip {padding: 4px 6px;}
+            QLabel#appTitle {font-size: 15px; font-weight: bold;}
     """
+        
         # Themes
         self.dark_theme = f"""
-            QWidget {{background-color: {BG_DARKMODE2}; color: {ASH_GRAY};}}
+            QWidget {{background-color: {BG_DARKMODE}; color: {ASH_GRAY};}}
             QPushButton {{background-color: {MIDNIGHT_BLACK}; border: 1px solid {GUNMETAL_GRAY};}}
             QPushButton:hover {{background-color: {DEEP_PLUM}; }}
             QPushButton:pressed {{background-color: {DARK_ESPRESSO};}}
@@ -671,6 +708,38 @@ class MainWindow(QMainWindow):
             QLineEdit, QTextEdit, QTextBrowser, QListWidget {{background-color: {MIDNIGHT_BLACK}; border: 1px solid {GUNMETAL_GRAY};}}
             QLineEdit:focus, QTextEdit:focus {{border: 1px solid {MUTED_ACCENT};}}
             QScrollArea {{border: 1px solid {GUNMETAL_GRAY};}}
+
+            /* Scrollbars */
+            QScrollBar {{background-color: transparent;}}
+            QScrollBar::handle {{background-color: {GUNMETAL_GRAY};}}
+            QScrollBar::handle:hover {{background-color: {SLATE_GRAY};}}
+
+            /* Checkboxes and radio buttons */
+            QCheckBox::indicator, QRadioButton::indicator {{background-color: {MIDNIGHT_BLACK}; border: 1px solid {GUNMETAL_GRAY};}}
+            QCheckBox::indicator:hover, QRadioButton::indicator:hover {{border: 1px solid {SOFT_PLUM};}}
+            QCheckBox::indicator:checked, QRadioButton::indicator:checked {{background-color: {SOFT_PLUM}; border: 1px solid {SOFT_PLUM};}}
+            QCheckBox:disabled, QRadioButton:disabled {{color: {GUNMETAL_GRAY};}}
+            QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{background-color: {DEEP_CHARCOAL}; border: 1px solid {DEEP_CHARCOAL};}}
+
+            /* Sliders */
+            QSlider::groove:horizontal {{background-color: {GUNMETAL_GRAY};}}
+            QSlider::sub-page:horizontal {{background-color: {SOFT_PLUM};}}
+            QSlider::handle:horizontal {{background-color: {ASH_GRAY};}}
+            QSlider::sub-page:horizontal:disabled {{background-color: {DEEP_CHARCOAL};}}
+            QSlider::handle:horizontal:disabled {{background-color: {GUNMETAL_GRAY};}}
+
+            /* Sidebar chat rows */
+            QPushButton#chatItem {{background-color: transparent;}}
+            QPushButton#chatItem:hover {{background-color: {DEEP_CHARCOAL};}}
+            QPushButton#chatItem:checked {{background-color: {DEEP_PLUM};}}
+            QPushButton#chatItem:disabled {{color: {GUNMETAL_GRAY};}}
+            QPushButton#deleteButton {{background-color: transparent; color: {SLATE_GRAY};}}
+            QPushButton#deleteButton:hover {{background-color: {DEEP_RED}; color: {ASH_GRAY};}}
+
+            /* Lists and tooltips */
+            QListWidget::item:hover {{background-color: {DEEP_CHARCOAL};}}
+            QListWidget::item:selected {{background-color: {DEEP_PLUM}; color: {ASH_GRAY};}}
+            QToolTip {{background-color: {MIDNIGHT_BLACK}; color: {ASH_GRAY}; border: 1px solid {GUNMETAL_GRAY};}}
     """
         self.light_theme = f"""
             QWidget {{background-color: {BG_LIGHTMODE}; color: {DEEP_BLACK};}}
@@ -680,16 +749,50 @@ class MainWindow(QMainWindow):
             QPushButton:disabled {{background-color: {BG_LIGHTMODE}; color: {GUNMETAL_GRAY};}}
             QLineEdit, QTextEdit, QTextBrowser, QListWidget {{background-color: {ASH_GRAY}; border: 1px solid {GUNMETAL_GRAY};}}
             QLineEdit:focus, QTextEdit:focus {{border: 1px solid {DEEP_PLUM};}}
-            QScrollArea {{border: 1px solid {GUNMETAL_GRAY};}}            
+            QScrollArea {{border: 1px solid {GUNMETAL_GRAY};}}
+
+            /* Scrollbars */
+            QScrollBar {{background-color: transparent;}}
+            QScrollBar::handle {{background-color: {GUNMETAL_GRAY};}}
+            QScrollBar::handle:hover {{background-color: {DEEP_PLUM};}}
+
+            /* Checkboxes and radio buttons */
+            QCheckBox::indicator, QRadioButton::indicator {{background-color: {ASH_GRAY}; border: 1px solid {GUNMETAL_GRAY};}}
+            QCheckBox::indicator:hover, QRadioButton::indicator:hover {{border: 1px solid {DEEP_PLUM};}}
+            QCheckBox::indicator:checked, QRadioButton::indicator:checked {{background-color: {DEEP_PLUM}; border: 1px solid {DEEP_PLUM};}}
+            QCheckBox:disabled, QRadioButton:disabled {{color: {GUNMETAL_GRAY};}}
+            QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{background-color: {BG_LIGHTMODE}; border: 1px solid {ASH_GRAY};}}
+
+            /* Sliders */
+            QSlider::groove:horizontal {{background-color: {ASH_GRAY};}}
+            QSlider::sub-page:horizontal {{background-color: {DEEP_PLUM};}}
+            QSlider::handle:horizontal {{background-color: {GUNMETAL_GRAY};}}
+            QSlider::sub-page:horizontal:disabled {{background-color: {ASH_GRAY};}}
+            QSlider::handle:horizontal:disabled {{background-color: {ASH_GRAY};}}
+
+            /* Sidebar chat rows */
+            QPushButton#chatItem {{background-color: transparent;}}
+            QPushButton#chatItem:hover {{background-color: {ASH_GRAY};}}
+            QPushButton#chatItem:checked {{background-color: {MUTED_ACCENT};}}
+            QPushButton#chatItem:disabled {{color: {GUNMETAL_GRAY};}}
+            QPushButton#deleteButton {{background-color: transparent; color: {GUNMETAL_GRAY};}}
+            QPushButton#deleteButton:hover {{background-color: {DEEP_RED}; color: {BG_LIGHTMODE};}}
+
+            /* Lists and tooltips */
+            QListWidget::item:hover {{background-color: {BG_LIGHTMODE};}}
+            QListWidget::item:selected {{background-color: {MUTED_ACCENT}; color: {DEEP_BLACK};}}
+            QToolTip {{background-color: {BG_LIGHTMODE}; color: {DEEP_BLACK}; border: 1px solid {GUNMETAL_GRAY};}}            
     """
 
     def apply_theme(self):
         if self.dark_mode:
             theme = self.dark_theme
             self.top_bar.theme_button.setText("Light Theme")
+            self.top_bar.theme_button.setIcon(QIcon("Icons-Pictures\\Light-Theme.png"))
         else:
             theme = self.light_theme
             self.top_bar.theme_button.setText("Dark Theme")
+            self.top_bar.theme_button.setIcon(QIcon("Icons-Pictures\\Dark-Theme.png"))
 
         QApplication.instance().setStyleSheet(self.base_style + theme)
 
@@ -841,6 +944,7 @@ class MainWindow(QMainWindow):
         existing_empty_chat = self.empty_chat()
         if existing_empty_chat is not None:
             self.current_chat = existing_empty_chat
+            self.sidebar.select_chat(existing_empty_chat)
             self.chat_area.clear()
             return
         
@@ -856,6 +960,7 @@ class MainWindow(QMainWindow):
 
         self.current_chat = chat_id
         self.sidebar.add_chat(chat_id, "New Chat")
+        self.sidebar.select_chat(chat_id)
         self.chat_area.clear()
     
     def empty_chat(self):
@@ -1175,15 +1280,6 @@ class MainWindow(QMainWindow):
         self.input_bar.clear_attachments_button.setVisible(True)
 
     def start_llama_server(self):
-        if self.model_settings["mode"] == "gpu":
-            ngl = 999
- 
-        elif self.model_settings["mode"] == "hybrid":
-            ngl = self.model_settings["gpu_layers"]
- 
-        else:
-            ngl = 0
-
         args = [
             r".\LocalLLM\backend_13.3\llama-server.exe",
             "-m", r".\LocalLLM\models\Qwen3.6-27B-UD-IQ3_XXS.gguf",
@@ -1198,12 +1294,14 @@ class MainWindow(QMainWindow):
         if self.vision_active():
             args += ["--mmproj", self.mmproj_path, "--image-min-tokens", "1024"]
 
-        if self.model_settings["mode"] != "gpu":
-            args += ["-ngl", str(ngl)]
+        if self.model_settings["mode"] == "hybrid":
+            args += ["-ngl", str(self.model_settings["gpu_layers"])]
+        elif self.model_settings["mode"] == "cpu":
+            args += ["-ngl", "0"]
 
         self.server_process = subprocess.Popen(args, cwd=self.project_root)
 
-        #stdout=subprocess.DEVNULL, # subprocess terminal output
+        #stdout=subprocess.DEVNULL, # subprocess terminal output, goes inside Popen(args, cwd, stdout, stderr)
         #stderr=subprocess.DEVNULL
         self.wait_for_server()
 
