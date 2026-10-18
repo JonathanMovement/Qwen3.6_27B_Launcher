@@ -19,7 +19,7 @@ import markdown
 import re
 
 # Folder the app lives in: next to the .exe when built.
-if getattr(sys, "fronzen", False):
+if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
 else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
