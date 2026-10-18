@@ -98,7 +98,7 @@ def count_tokens(text):
         )
         if r.status_code == 200:
             return len(r.json()["tokens"])
-    except:
+    except Exception:
         pass
     return len(text) // 4
 
@@ -563,7 +563,7 @@ class ServerStartThread(QThread):
                 if r.status_code == 200:
                     self.ready.emit()
                     return
-            except:
+            except Exception:
                 pass
             time.sleep(2)
         self.failed.emit("Timed out after 5 minutes.")
@@ -690,8 +690,11 @@ class MainWindow(QMainWindow):
 
         for filename in os.listdir("chats"):
             if filename.endswith(".json"):
-                with open(f"chats/{filename}", encoding="utf8") as f:
-                    data = json.load(f)
+                try:
+                    with open(f"chats/{filename}", encoding="utf8") as f:
+                        data = json.load(f)
+                except Exception:
+                    continue
                 chat_id = filename[:-5]
 
                 self.sidebar.add_chat(chat_id, data["title"])
@@ -920,7 +923,7 @@ class MainWindow(QMainWindow):
         self.input_bar.stop_button.clicked.connect(self.stop_generation)
         self.top_bar.web_toggle.toggled.connect(self.toggle_online_mode)
         self.input_bar.attach_button.clicked.connect(self.attach_files)
-        self.input_bar.clear_attachments_button.clicked.connect(self.clear_attachements)
+        self.input_bar.clear_attachments_button.clicked.connect(self.clear_attachments)
         self.input_bar.input_box.returnPressed.connect(self.send_message)
         self.top_bar.vision_button.toggled.connect(self.toggle_vision)
         self.input_bar.input_box.image_pasted.connect(self.attach_pasted_image)
@@ -949,15 +952,16 @@ class MainWindow(QMainWindow):
     def toggle_online_mode(self, enabled):
         if enabled:
             self.chat_area.add_message("system", "Starting Online Mode...")
-            self.start_searxng()
-            self.searx = SearXClient(base_url="http://127.0.0.1:8081")
+            if not self.start_searxng():
+                self.top_bar.web_toggle.blockSignals(True)
+                self.top_bar.web_toggle.setChecked(False)
+                self.top_bar.web_toggle.blockSignals(False)
         else:
             self.chat_area.add_message("system", "Online Mode disabled.")
             self.stop_searxng()
 
     def toggle_vision(self, enabled):
-        thread = getattr(self, "inference_thread", None)
-        if thread is not None and thread.isRunning():
+        if self.generation_running():
             self.chat_area.add_message("system", "Can't switch vision while a response is generating.")
             self.top_bar.vision_button.blockSignals(True)
             self.top_bar.vision_button.setChecked(not enabled)
@@ -987,6 +991,16 @@ class MainWindow(QMainWindow):
                 self.server_process.wait()
 
         self.start_llama_server()
+
+    def generation_running(self): # Main chat or any project window waiting on model
+        thread = getattr(self, "inference_thread", None)
+        if thread is not None and thread.isRunning():
+            return True
+        for window in self.projects_window.open_windows.values():
+            thread = window.inference_thread
+            if thread is not None and thread.isRunning():
+                return True
+        return False
     
     def new_chat(self):
         existing_empty_chat = self.empty_chat()
@@ -1156,7 +1170,7 @@ class MainWindow(QMainWindow):
         try:
             results = self.searx.search(query)
         except Exception as e:
-            self.chat_area.add_message("system", f"Web search failed - {type(e).__name__}: {e}")
+            chat_area.add_message("system", f"Web search failed - {type(e).__name__}: {e}")
             return WEB_FALLBACK, []
         
         if not results:
@@ -1176,10 +1190,12 @@ class MainWindow(QMainWindow):
             context += f"URL: {result['url']}\n"
             context += f"Snippet: {result['content']}\n\n"
         context += (
-            "Base your answer on these results. If they do not cover the question, "
-            "say that you could not find current information rather than stating "
-            "that something does not exist. Distinguish professional critic reviews "
-            "from player or user reviews, and say which ones the results cover.\n"
+            "Base your answer on these results. The snippets are short excerpts, so only state "
+            "facts, reasons or complaints that actually appear in them. If they do not say why "
+            "something happened, say the results do not explain it instead of guessing. "
+            "If the results do not cover the question, say that you could not find current "
+            "information rather than stating that something does not exist. Distinguish "
+            "professional critic reviews from player or user reviews, and say which ones the results cover.\n"
         )
 
         return context, results
@@ -1296,7 +1312,7 @@ class MainWindow(QMainWindow):
 
         self.update_attachment_label()
 
-    def clear_attachements(self):
+    def clear_attachments(self):
         self.attached_files = []
         self.update_attachment_label()
 
@@ -1347,6 +1363,7 @@ class MainWindow(QMainWindow):
         return self.mmproj_available and self.vision_enabled
 
     def wait_for_server(self):
+        self.server_ready = False
         self.chat_area.add_message("system", "Loading model, please wait...")
         self.input_bar.send_button.setEnabled(False) # disable send while loading
         self.top_bar.vision_button.setEnabled(False)
@@ -1357,6 +1374,7 @@ class MainWindow(QMainWindow):
         self.server_thread.start()
 
     def on_server_ready(self):
+        self.server_ready = True
         self.chat_area.add_message("system", "Model ready.\n")
         self.input_bar.send_button.setEnabled(True) # re-enable send
         self.top_bar.vision_button.setEnabled(self.mmproj_available)
@@ -1370,8 +1388,7 @@ class MainWindow(QMainWindow):
         self.settings_window.show()
 
     def apply_settings(self):
-        thread = getattr(self, "inference_thread", None)
-        if thread is not None and thread.isRunning():
+        if self.generation_running():
             self.chat_area.add_message(
                 "system", "Can't change model settings while a response is generating."
             )
@@ -1418,7 +1435,7 @@ class MainWindow(QMainWindow):
     def token_count(self, text):
         return count_tokens(text) # method to run count_tokens in projects_window.py
 
-    def rewrite_search_query(self, history, prompt):
+    def rewrite_search_query(self, history, prompt, topic=""):
         recent = history[-5:-1] # the turns before the current message
         lines = []
         for message in recent:
@@ -1430,13 +1447,18 @@ class MainWindow(QMainWindow):
             "Rewrite the user's latest message as a short standalone web search query "
             "(max 10 words). Include the specific names it refers to. Describe only the "
             "topic - do not include the user's claims, opinions or expected answer. "
-            "Output only the query, nothing else."
+            "Output only the query, nothing else. Replace words like 'it' or 'the game' "
+            "with the actual name, using the topic and the conversation."
         )
+
+        user_text = f"Conversation:\n{conversation}\n\nLatest message: {prompt}"
+        if topic:
+            user_text = f"This conversation is about: {topic}\n\n" + user_text
         body = {
             "model": "Qwen",
             "messages": [
                 {"role": "system", "content": instruction},
-                {"role": "user", "content": f"Conversation:\n{conversation}\n\nLatest message: {prompt}"}
+                {"role": "user", "content": user_text}
             ],
             "max_tokens": 30,
             "temperature": 0,
@@ -1455,6 +1477,9 @@ class MainWindow(QMainWindow):
         return query
 
     def closeEvent(self, event): # Kill server when app window is closed (closeEvent default Qt method)
+        for window in self.projects_window.open_windows.values():
+            window.close()
+
         thread = getattr(self, "inference_thread", None)
         if thread is not None and thread.isRunning():
             thread.abort()
@@ -1468,6 +1493,7 @@ class MainWindow(QMainWindow):
 
         event.accept()
 
+QApplication.setAttribute(Qt.AA_DisableWindowContextHelpButton)
 app = QApplication(sys.argv)
 
 window = MainWindow()

@@ -246,7 +246,7 @@ class ProjectsWindow(QDialog):
         )
         if confirm != QMessageBox.Yes:
             return
-        window = self.open_project.pop(project_id, None)
+        window = self.open_windows.pop(project_id, None)
         if window is not None:
             window.close() # stops its generation before the files are removed
 

@@ -12,8 +12,8 @@ from file_loader import load_file, load_image_bytes, UnsupportedFile
 IMAGE_TOKEN_COST = 1100
 
 class InstructionsWindow(QDialog):
-    def __init__(self, host, project_id):
-        super().__init__(host)
+    def __init__(self, host, project_id, parent=None):
+        super().__init__(parent)
         self.host = host
         self.project_id = project_id
 
@@ -153,7 +153,7 @@ class InstructionsWindow(QDialog):
 
 class ProjectChatWindow(QMainWindow):
     def __init__(self, host, project_id):
-        super().__init__(host)
+        super().__init__(None)
         self.host = host
         self.project_id = project_id
 
@@ -164,6 +164,7 @@ class ProjectChatWindow(QMainWindow):
         else:
             self.chat_area = host.new_chat_area()
             self.input_bar = host.new_input_bar()
+            self.setWindowIcon(host.windowIcon()) # no parent = copy the Qwen icon from Main window 
 
         self.resize(1080, 700)
 
@@ -221,7 +222,7 @@ class ProjectChatWindow(QMainWindow):
         self.name_label.setText(name)
 
     def open_instructions(self):
-        window = InstructionsWindow(self.host, self.project_id)
+        window = InstructionsWindow(self.host, self.project_id, self)
         window.exec_()
         self.refresh_name()
 
@@ -246,6 +247,10 @@ class ProjectChatWindow(QMainWindow):
 
     def on_vision_toggled(self, enabled):
         if self.host is None:
+            return
+        if self.host.generation_running():
+            self.chat_area.add_message("system", "Can't switch vision while a response is generating.")
+            self.sync_from_host() # puts the checkbox back to the real state
             return
         self.host.top_bar.vision_button.setChecked(enabled)
 
@@ -339,6 +344,10 @@ class ProjectChatWindow(QMainWindow):
         if not prompt and not self.attached_files:
             return
 
+        if not self.host.server_ready:
+            self.chat_area.add_message("system", "Model is still loading - wait for 'Model ready' in the main window.")
+            return
+
         attachments = self.attached_files
         self.attached_files = []
         self.update_attachment_label()
@@ -392,17 +401,9 @@ class ProjectChatWindow(QMainWindow):
             messages[-1] = {"role": "user", "content": content}
 
         if self.host.top_bar.web_toggle.isChecked(): # Web context: Send & Receive
-            query = self.host.rewrite_search_query(data.get("messages", []), prompt)
+            query = self.host.rewrite_search_query(data.get("messages", []), prompt, data.get("name", ""))
             self.chat_area.add_message("system", f"Searching: {query}")
-            web_context, self.last_web_sources = self.build_web_context(query, self.chat_area)
-            messages.insert(0, {"role": "system", "content": web_context})
-            if not web_context:
-                web_context = (
-                    "A web search was attempted for this message but returned nothing. "
-                    "You have no current information. If the question is about recent "
-                    "releases, events or products, say you could not verify it. Never claim "
-                    "something does not exist just because you do not recognize it."
-                )
+            web_context, self.last_web_sources = self.host.build_web_context(query, self.chat_area)
             messages.insert(0, {"role": "system", "content": web_context})
 
         if project_context:
