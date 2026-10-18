@@ -19,3 +19,9 @@ SearXNG/searxng/settings.yml
 # Scratch files
 test.py
 testing.py
+
+build/
+dist/
+*.spec
+*.exe
+llama-server.log
