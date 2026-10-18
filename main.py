@@ -18,6 +18,13 @@ import shutil
 import markdown
 import re
 
+# Folder the app lives in: next to the .exe when built.
+if getattr(sys, "fronze", False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(APP_DIR) # chats, projects, Icons-Pictures and SearXNG always resolve here
+
 # Project_Colors
 GUNMETAL_GRAY = "#494d4a"
 DEEP_CHARCOAL = "#363836"
@@ -679,7 +686,7 @@ class MainWindow(QMainWindow):
     
         self.server_process = None
         self.attached_files = []
-        self.project_root = os.path.dirname(os.path.abspath(__file__))
+        self.project_root = APP_DIR
         self.mmproj_path = r".\LocalLLM\models\mmproj-F16.gguf"
         self.mmproj_available = os.path.exists(os.path.join(self.project_root, self.mmproj_path))
         self.vision_enabled = False
@@ -878,7 +885,8 @@ class MainWindow(QMainWindow):
                 ["docker", "compose", "up", "-d"],
                 cwd=compose,
                 capture_output=True,
-                text=True
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             if result.returncode != 0:
                 self.chat_area.add_message("system", f"SearXNG failed to start:\n{result.stderr}")
@@ -893,7 +901,9 @@ class MainWindow(QMainWindow):
 
         subprocess.run(
             ["docker", "compose", "down"],
-            cwd=compose
+            cwd=compose,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            capture_output=True
         )
 
     def initUI(self):
@@ -1353,10 +1363,14 @@ class MainWindow(QMainWindow):
         elif self.model_settings["mode"] == "cpu":
             args += ["-ngl", "0"]
 
-        self.server_process = subprocess.Popen(args, cwd=self.project_root)
-
-        #stdout=subprocess.DEVNULL, # subprocess terminal output, goes inside Popen(args, cwd, stdout, stderr)
-        #stderr=subprocess.DEVNULL
+        with open("llama-server.log", "w", encoding="utf8") as log:
+            self.server_process = subprocess.Popen(
+                args,
+                cwd=self.project_root,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
         self.wait_for_server()
 
     def vision_active(self):
@@ -1375,7 +1389,7 @@ class MainWindow(QMainWindow):
 
     def on_server_ready(self):
         self.server_ready = True
-        self.chat_area.add_message("system", "Model ready.\n")
+        self.chat_area.add_message("system", "Model ready.")
         self.input_bar.send_button.setEnabled(True) # re-enable send
         self.top_bar.vision_button.setEnabled(self.mmproj_available)
 
