@@ -385,6 +385,10 @@ class ProjectChatWindow(QMainWindow):
         ref_images = self.project_images()
 
         reserve = (len(image_files) + len(ref_images)) * IMAGE_TOKEN_COST
+
+        if self.host.top_bar.web_toggle.isChecked():
+            reserve += 2500 # room for web pages, same as WEB_TOKEN_COST in main.py
+
         if project_context:
             reserve += self.host.token_count(project_context)
 
@@ -402,9 +406,12 @@ class ProjectChatWindow(QMainWindow):
 
         if self.host.top_bar.web_toggle.isChecked(): # Web context: Send & Receive
             query = self.host.rewrite_search_query(data.get("messages", []), prompt, data.get("name", ""))
-            self.chat_area.add_message("system", f"Searching: {query}")
-            web_context, self.last_web_sources = self.host.build_web_context(query, self.chat_area)
-            messages.insert(0, {"role": "system", "content": web_context})
+            if query:
+                self.chat_area.add_message("system", f"Searching: {query}")
+                web_context, self.last_web_sources = self.host.build_web_context(query, self.chat_area)
+                messages.insert(0, {"role": "system", "content": web_context})
+            else:
+                self.chat_area.add_message("system", "No web search needed for this message.")
 
         if project_context:
             messages.insert(0, {"role": "system", "content": project_context})

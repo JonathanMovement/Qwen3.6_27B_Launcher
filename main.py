@@ -59,6 +59,7 @@ SYSTEM_PROMPT = """
 """
 
 IMAGE_TOKEN_COST = 1100 # matches the --image-min-tokens 1024 floor
+WEB_TOKEN_COST = 2500 # 2 pages (~1000 tokens each) + snippets + instructions
 
 WEB_FALLBACK = (
     "A web search was attempted for this message but returned nothing. "
@@ -591,19 +592,19 @@ class InferenceThread(QThread):
     def run(self):
         url = "http://127.0.0.1:8080/v1/chat/completions"
 
-        messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            }
-        ] + self.messages
+        today = time.strftime("%A, %d %B %Y")
+        system_text = SYSTEM_PROMPT + f"\n    Today's date is {today}. Use it for anything time-related like 'now', 'latest' or 'this year'.\n"
+        messages = [{"role": "system", "content": system_text}] + self.messages
 
         data = {
             "model": "Qwen",
             "messages": messages,
             "max_tokens": self.max_tokens,
-            "temperature": 0.6,
-            "top_p": 0.95,
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "top_k": 20,
+            "min_p": 0.0,
+            "presence_penalty": 1.5,
             "chat_template_kwargs": {
                 "enable_thinking": False
             },
@@ -1090,7 +1091,10 @@ class MainWindow(QMainWindow):
         self.input_bar.stop_button.setEnabled(True)
         self.sidebar.setEnabled(False) # block switching/new-chat mid-generation
 
-        messages = self.get_chat_messages(target_chat, len(image_files) * IMAGE_TOKEN_COST)
+        reserve = len(image_files) * IMAGE_TOKEN_COST
+        if self.top_bar.web_toggle.isChecked():
+            reserve += WEB_TOKEN_COST
+        messages = self.get_chat_messages(target_chat, reserve)
 
         # swap the last user message to multimodal content when images are attached
         if image_files and messages:
@@ -1106,9 +1110,12 @@ class MainWindow(QMainWindow):
 
         if self.top_bar.web_toggle.isChecked():
             query = self.rewrite_search_query(messages, prompt)
-            self.chat_area.add_message("system", f"Searching: {query}")
-            web_context, self.last_web_sources = self.build_web_context(query, self.chat_area)
-            messages.insert(0, {"role": "system", "content": web_context})
+            if query:
+                self.chat_area.add_message("system", f"Searching: {query}")
+                web_context, self.last_web_sources = self.build_web_context(query, self.chat_area)
+                messages.insert(0, {"role": "system", "content": web_context})
+            else:
+                self.chat_area.add_message("system", "No web search needed for this message.")
 
         self.inference_thread = InferenceThread(messages, self.model_settings["max_tokens"], target_chat)
         self.inference_thread.result_ready.connect(self.on_response)
@@ -1195,19 +1202,31 @@ class MainWindow(QMainWindow):
             return WEB_FALLBACK, []
 
         context = "Internet search results:\n\n"
+        pages_read = 0
+        attempts = 0
         for result in results:
             context += f"Title: {result['title']}\n"
             context += f"URL: {result['url']}\n"
-            context += f"Snippet: {result['content']}\n\n"
-        context += (
-            "Base your answer on these results. The snippets are short excerpts, so only state "
-            "facts, reasons or complaints that actually appear in them. If they do not say why "
-            "something happened, say the results do not explain it instead of guessing. "
-            "If the results do not cover the question, say that you could not find current "
-            "information rather than stating that something does not exist. Distinguish "
-            "professional critic reviews from player or user reviews, and say which ones the results cover.\n"
-        )
+            context += f"Snippet: {result['content']}\n"
+            if pages_read < 2 and attempts < 3 and result["url"].startswith("http"):
+                attempts += 1
+                page_text = self.searx.fetch_page(result["url"])
+                if page_text:
+                    context += f"Page content:\n{page_text}\n"
+                    pages_read += 1
+            context += "\n"
 
+        chat_area.add_message("system", f"Read {pages_read} of {len(results)} result pages.")
+
+        context += (
+            "Base your answer on these results. When a result includes page content, rely on it "
+            "over the snippet. Only state facts, numbers, reasons or complaints that actually appear "
+            "in the results. If they do not say why something happened, say the results do not "
+            "explain it instead of guessing. If the results do not cover the question, say that you "
+            "could not find current information rather than stating that something does not exist. "
+            "Distinguish professional critic reviews from player or user reviews, and say which ones "
+            "the results cover.\n"
+        )
         return context, results
     
     def message_budget(self, messages, reserve=0):
@@ -1463,9 +1482,14 @@ class MainWindow(QMainWindow):
             "topic - do not include the user's claims, opinions or expected answer. "
             "Output only the query, nothing else. Replace words like 'it' or 'the game' "
             "with the actual name, using the topic and the conversation."
+            " If the latest message does not need current information from the web (greetings, "
+            "thanks, coding, math, writing, or questions about this conversation), output exactly "
+            "NONE. When in doubt, write a search query."
         )
 
-        user_text = f"Conversation:\n{conversation}\n\nLatest message: {prompt}"
+        today = time.strftime("%d %B %Y")
+        user_text = f"Today's date: {today}\n\nConversation:\n{conversation}\n\nLatest message: {prompt}"
+
         if topic:
             user_text = f"This conversation is about: {topic}\n\n" + user_text
         body = {
@@ -1488,6 +1512,8 @@ class MainWindow(QMainWindow):
 
         if not query:
             return prompt
+        if query.strip(".").upper() == "NONE":
+            return "" # empty = no search needed
         return query
 
     def closeEvent(self, event): # Kill server when app window is closed (closeEvent default Qt method)
