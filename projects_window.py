@@ -230,8 +230,14 @@ class ProjectChatWindow(QMainWindow):
         if self.host is None:
             return
 
-        online = self.host.top_bar.web_toggle.isChecked()
-        self.online_label.setText(f"Online mode: {'ON' if online else 'OFF'}")
+        status = "Online mode: OFF"
+        if self.host.top_bar.web_toggle.isChecked():
+            status = "Online mode: ON"
+        if self.host.top_bar.think_toggle.isChecked():
+            status += " | Thinking: ON"
+        else:
+            status += " | Thinking: OFF"
+        self.online_label.setText(status)
 
         self.vision_toggle.blockSignals(True)
         self.vision_toggle.setChecked(self.host.vision_enabled)
@@ -243,6 +249,7 @@ class ProjectChatWindow(QMainWindow):
             return
         self.host.top_bar.vision_button.toggled.connect(self.sync_from_host)
         self.host.top_bar.web_toggle.toggled.connect(self.sync_from_host)
+        self.host.top_bar.think_toggle.toggled.connect(self.sync_from_host)
         self.sync_from_host()
 
     def on_vision_toggled(self, enabled):
@@ -416,6 +423,9 @@ class ProjectChatWindow(QMainWindow):
         if project_context:
             messages.insert(0, {"role": "system", "content": project_context})
 
+        if self.host.top_bar.think_toggle.isChecked():
+            self.chat_area.add_message("system", "Thinking mode on - the answer can take a few minutes.")
+
         self.inference_thread = self.host.new_inference_thread(messages, self.project_id)
         self.inference_thread.result_ready.connect(self.on_response)
         self.inference_thread.start()
@@ -476,6 +486,7 @@ class ProjectChatWindow(QMainWindow):
                 try:
                     self.host.top_bar.vision_button.toggled.disconnect(self.sync_from_host)
                     self.host.top_bar.web_toggle.toggled.disconnect(self.sync_from_host)
+                    self.host.top_bar.think_toggle.toggled.disconnect(self.sync_from_host)
                 except TypeError:
                     pass
     

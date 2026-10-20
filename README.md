@@ -73,14 +73,18 @@ LocalLLM\
 ## 4. Set up SearXNG (Only for Online mode)
 - Install Docker Desktop and start it.
 - Open a terminal in the SearXNG folder and run:
+```bash
 docker compose up -d
+```
 
 The first start downloads the images and creates SearXNG\searxng\settings.yml.
 Give it about 30 seconds and open settings.yml, find formats: under search: and add json:
+```bash
 search:
      formats:
        - html
        - json
+```
 
 Without this, every earch fails with 403 Forbidden.
 
@@ -92,8 +96,10 @@ Docker Desktop just has to be running.
 Download LocalQwen.exe from the Releases page (or build it yourself), put it in the main folder next to LocalLLM and double click it.
 
 ### Option B: from source
-#### pip install -r requirements.txt
-#### python main.py
+```bash
+pip install -r requirements.txt
+python main.py
+```
 
 ## -- Using the app --
 - First start - loading the model takes a while. Wait for Model ready in the chat before sending.

@@ -56,6 +56,7 @@ SYSTEM_PROMPT = """
     - Only state a number, score or rating if a source gives it for the exact subject being discussed.
     - If you don't have enough information to answer confidently, say so directly instead of guessing.
     - Your knowledge has a cutoff. Things you don't recognize may simply be newer than your training - never claim something does not exist because you don't know about it.
+    - Never use LaTeX or $...$ math notation; write math as plain text.
 """
 
 IMAGE_TOKEN_COST = 1100 # matches the --image-min-tokens 1024 floor
@@ -150,6 +151,9 @@ class TopBar(QWidget):
         self.vision_button = QCheckBox("Enable Vision")
         self.vision_button.setChecked(False)
         self.vision_button.setToolTip("Loads the vision projector (~1.1 GB Vram). Restarts the model.")
+        self.think_toggle = QCheckBox("Thinking")
+        self.think_toggle.setChecked(False)
+        self.think_toggle.setToolTip("The model reasons. Better for logic and code but slower. Set Max Response Tokens to 4096+")
         self.web_toggle = QCheckBox("Online mode")
         self.web_toggle.setChecked(False)
         self.theme_button = QPushButton("Dark Theme")
@@ -163,6 +167,7 @@ class TopBar(QWidget):
         layout.addWidget(self.title_label)
         layout.addWidget(self.projects_button)
         layout.addStretch()
+        layout.addWidget(self.think_toggle)
         layout.addWidget(self.vision_button)
         layout.addWidget(self.web_toggle)
         layout.addWidget(self.theme_button)
@@ -579,11 +584,12 @@ class ServerStartThread(QThread):
 class InferenceThread(QThread):
     result_ready = pyqtSignal(str, str) # (answer, chat_id)
 
-    def __init__(self, messages, max_tokens, chat_id):
+    def __init__(self, messages, max_tokens, chat_id, thinking=False):
         super().__init__()
         self.messages = messages
         self.max_tokens = max_tokens
         self.chat_id = chat_id
+        self.thinking = thinking
         self._abort = False
 
     def abort(self):
@@ -596,17 +602,26 @@ class InferenceThread(QThread):
         system_text = SYSTEM_PROMPT + f"\n    Today's date is {today}. Use it for anything time-related like 'now', 'latest' or 'this year'.\n"
         messages = [{"role": "system", "content": system_text}] + self.messages
 
+        if self.thinking:
+            temperature = 1.0
+            top_p = 0.95
+            presence_penalty = 0.0
+        else:
+            temperature = 0.7
+            top_p = 0.8
+            presence_penalty = 1.5
+
         data = {
             "model": "Qwen",
             "messages": messages,
             "max_tokens": self.max_tokens,
-            "temperature": 0.7,
-            "top_p": 0.8,
+            "temperature": temperature,
+            "top_p": top_p,
             "top_k": 20,
             "min_p": 0.0,
-            "presence_penalty": 1.5,
+            "presence_penalty": presence_penalty,
             "chat_template_kwargs": {
-                "enable_thinking": False
+                "enable_thinking": self.thinking
             },
             "stream": True
         }
@@ -645,6 +660,12 @@ class InferenceThread(QThread):
                     pieces.append(piece)
 
             text = "".join(pieces)
+
+            if "</think>" in text: # some llama-server builds leave the thinking inside the answer
+                text = text.split("</think>", 1)[1].strip()
+            if not text and self.thinking and not self._abort:
+                text = ("*[The model used all of Max Response Tokens on thinking and never wrote an answer. "
+                        "Raise Max Response Tokens in Settings to 4096 or more and try again.]*")
             if self._abort:
                 text = (text +"\n\n*[stopped]*") if text else "*[stopped]*"
             self.result_ready.emit(text, self.chat_id)
@@ -1117,7 +1138,10 @@ class MainWindow(QMainWindow):
             else:
                 self.chat_area.add_message("system", "No web search needed for this message.")
 
-        self.inference_thread = InferenceThread(messages, self.model_settings["max_tokens"], target_chat)
+        if self.top_bar.think_toggle.isChecked():
+            self.chat_area.add_message("system", "Thinking mode on - the answer can take a few minutes.")
+        self.inference_thread = InferenceThread(messages, self.model_settings["max_tokens"], target_chat, 
+                                                self.top_bar.think_toggle.isChecked())
         self.inference_thread.result_ready.connect(self.on_response)
         self.inference_thread.start()
 
@@ -1463,7 +1487,8 @@ class MainWindow(QMainWindow):
         return InputBar()
 
     def new_inference_thread(self, messages, chat_id): # method to open InferenceThread in projects_window.py
-        return InferenceThread(messages, self.model_settings["max_tokens"], chat_id)
+        return InferenceThread(messages, self.model_settings["max_tokens"], chat_id, 
+                               self.top_bar.think_toggle.isChecked())
 
     def token_count(self, text):
         return count_tokens(text) # method to run count_tokens in projects_window.py
