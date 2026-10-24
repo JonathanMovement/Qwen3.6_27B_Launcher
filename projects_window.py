@@ -171,6 +171,10 @@ class ProjectChatWindow(QMainWindow):
         self.attached_files = []
         self.inference_thread = None
         self.last_web_sources = []
+        self.search_thread = None
+        self.search_cancelled = False
+        self.pending_messages = []
+        self.pending_project_context = ""
 
         self.name_label = QLabel()
         self.instructions_button = QPushButton("Instructions")
@@ -411,15 +415,32 @@ class ProjectChatWindow(QMainWindow):
                 })
             messages[-1] = {"role": "user", "content": content}
 
-        if self.host.top_bar.web_toggle.isChecked(): # Web context: Send & Receive
-            query = self.host.rewrite_search_query(data.get("messages", []), prompt, data.get("name", ""))
-            if query:
-                self.chat_area.add_message("system", f"Searching: {query}")
-                web_context, self.last_web_sources = self.host.build_web_context(query, self.chat_area)
-                messages.insert(0, {"role": "system", "content": web_context})
-            else:
-                self.chat_area.add_message("system", "No web search needed for this message.")
+        if self.host.top_bar.web_toggle.isChecked(): # search runs in a thread, inference starts in on_search_done
+            self.pending_messages = messages
+            self.pending_project_context = project_context
+            self.search_cancelled = False
+            self.search_thread = self.host.new_search_thread(data.get("messages", []), prompt, data.get("name", ""))
+            self.search_thread.status.connect(self.show_status)
+            self.search_thread.search_done.connect(self.on_search_done)
+            self.search_thread.start()
+            return
 
+        self.start_inference(messages, "", project_context)
+
+    def show_status(self, text):
+        self.chat_area.add_message("system", text)
+
+    def on_search_done(self, web_context, sources):
+        if self.search_cancelled: # stop was pressed while searching
+            self.last_web_sources = []
+            self.on_response("*[stopped]*", self.project_id)
+            return
+        self.last_web_sources = sources
+        self.start_inference(self.pending_messages, web_context, self.pending_project_context)
+
+    def start_inference(self, messages, web_context, project_context):
+        if web_context:
+            messages.insert(0, {"role": "system", "content": web_context})
         if project_context:
             messages.insert(0, {"role": "system", "content": project_context})
 
@@ -431,6 +452,10 @@ class ProjectChatWindow(QMainWindow):
         self.inference_thread.start()
 
     def stop_generation(self):
+        if self.search_thread is not None and self.search_thread.isRunning():
+            self.search_cancelled = True
+            self.input_bar.stop_button.setEnabled(False)
+            return
         if self.inference_thread is not None and self.inference_thread.isRunning():
             self.inference_thread.abort()
             self.input_bar.stop_button.setEnabled(False)
@@ -478,6 +503,9 @@ class ProjectChatWindow(QMainWindow):
         return out
 
     def closeEvent(self, event):
+            if self.search_thread is not None and self.search_thread.isRunning():
+                self.search_cancelled = True
+                self.search_thread.wait(3000)
             if self.inference_thread is not None and self.inference_thread.isRunning():
                 self.inference_thread.abort()
                 self.inference_thread.wait(3000)

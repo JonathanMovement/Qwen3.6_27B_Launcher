@@ -683,6 +683,27 @@ class InferenceThread(QThread):
             if response is not None:
                 response.close()
 
+class WebSearchThread(QThread):
+    status = pyqtSignal(str) # progress lines for the chat
+    search_done = pyqtSignal(str, object) # (web_context, sources) - empty context = no search
+
+    def __init__(self, host, history, prompt, topic=""):
+        super().__init__()
+        self.host = host
+        self.history = history
+        self.prompt = prompt
+        self.topic = topic
+
+    def run(self): # background thread - no widget calls, only signals
+        query = self.host.rewrite_search_query(self.history, self.prompt, self.topic)
+        if not query:
+            self.status.emit("No web search needed for this message.")
+            self.search_done.emit("", [])
+            return
+        self.status.emit(f"Searching: {query}")
+        context, sources = self.host.build_web_context(query, self.status.emit)
+        self.search_done.emit(context, sources)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -713,6 +734,8 @@ class MainWindow(QMainWindow):
         self.mmproj_available = os.path.exists(os.path.join(self.project_root, self.mmproj_path))
         self.vision_enabled = False
         self.searx = SearXClient()
+        self.search_thread = None
+        self.search_cancelled = False
 
         os.makedirs("chats", exist_ok=True)
         self.current_chat = None
@@ -1025,11 +1048,11 @@ class MainWindow(QMainWindow):
         self.start_llama_server()
 
     def generation_running(self): # Main chat or any project window waiting on model
-        thread = getattr(self, "inference_thread", None)
-        if thread is not None and thread.isRunning():
-            return True
+        threads = [getattr(self, "inference_thread", None), self.search_thread]
         for window in self.projects_window.open_windows.values():
-            thread = window.inference_thread
+            threads.append(window.inference_thread)
+            threads.append(window.search_thread)
+        for thread in threads:
             if thread is not None and thread.isRunning():
                 return True
         return False
@@ -1130,22 +1153,42 @@ class MainWindow(QMainWindow):
             messages[-1] = {"role": "user", "content": content}
 
         if self.top_bar.web_toggle.isChecked():
-            query = self.rewrite_search_query(messages, prompt)
-            if query:
-                self.chat_area.add_message("system", f"Searching: {query}")
-                web_context, self.last_web_sources = self.build_web_context(query, self.chat_area)
-                messages.insert(0, {"role": "system", "content": web_context})
-            else:
-                self.chat_area.add_message("system", "No web search needed for this message.")
+            self.pending_messages = messages
+            self.pending_chat = target_chat
+            self.search_cancelled = False
+            self.search_thread = WebSearchThread(self, messages, prompt)
+            self.search_thread.status.connect(self.show_status)
+            self.search_thread.search_done.connect(self.on_search_done)
+            self.search_thread.start()
+            return
 
+        self.start_inference(messages, target_chat)
+
+    def show_status(self, text):
+        self.chat_area.add_message("system", text)
+
+    def on_search_done(self, web_context, sources):
+        if self.search_cancelled: # stop was pressed while searching
+            self.last_web_sources = []
+            self.on_response("*[stopped]*", self.pending_chat)
+            return
+        self.last_web_sources = sources
+        if web_context:
+            self.pending_messages.insert(0, {"role": "system", "content": web_context})
+        self.start_inference(self.pending_messages, self.pending_chat)
+
+    def start_inference(self, messages, chat_id):
         if self.top_bar.think_toggle.isChecked():
-            self.chat_area.add_message("system", "Thinking mode on - the answer can take a few minutes.")
-        self.inference_thread = InferenceThread(messages, self.model_settings["max_tokens"], target_chat, 
-                                                self.top_bar.think_toggle.isChecked())
+            self.chat_area.add_message("system", "Thinking mode on - the answer can take a few minutes")
+        self.inference_thread = InferenceThread(messages, self.model_settings["max_tokens"], chat_id, self.top_bar.think_toggle.isChecked())
         self.inference_thread.result_ready.connect(self.on_response)
         self.inference_thread.start()
 
     def stop_generation(self):
+        if self.search_thread is not None and self.search_thread.isRunning():
+            self.search_cancelled = True
+            self.input_bar.stop_button.setEnabled(False)
+            return
         thread = getattr(self, "inference_thread", None)
         if thread is not None and thread.isRunning():
             thread.abort()
@@ -1207,11 +1250,11 @@ class MainWindow(QMainWindow):
 
         return self.message_budget(data["messages"], reserve)
 
-    def build_web_context(self, query, chat_area):
+    def build_web_context(self, query, report): # report(text) shows a status line, safe from a thread
         try:
             results = self.searx.search(query)
         except Exception as e:
-            chat_area.add_message("system", f"Web search failed - {type(e).__name__}: {e}")
+            report(f"Web search failed - {type(e).__name__}: {e}")
             return WEB_FALLBACK, []
         
         if not results:
@@ -1222,7 +1265,7 @@ class MainWindow(QMainWindow):
                 for engine in failed:
                     names.append(f"{engine[0]} ({engine[1]})")
                 reason = "engines failed: " + ", ".join(names)
-            chat_area.add_message("system", f"Web search returned nothing - {reason}. Answering without web data.")
+            report(f"Web search returned nothing - {reason}. Answering without web data.")
             return WEB_FALLBACK, []
 
         context = "Internet search results:\n\n"
@@ -1240,7 +1283,7 @@ class MainWindow(QMainWindow):
                     pages_read += 1
             context += "\n"
 
-        chat_area.add_message("system", f"Read {pages_read} of {len(results)} result pages.")
+        report(f"Read {pages_read} of {len(results)} result pages.")
 
         context += (
             "Base your answer on these results. When a result includes page content, rely on it "
@@ -1490,6 +1533,9 @@ class MainWindow(QMainWindow):
         return InferenceThread(messages, self.model_settings["max_tokens"], chat_id, 
                                self.top_bar.think_toggle.isChecked())
 
+    def new_search_thread(self, history, prompt, topic=""): # method to open WebSearchThread in projects_window.py
+        return WebSearchThread(self, history, prompt, topic)
+
     def token_count(self, text):
         return count_tokens(text) # method to run count_tokens in projects_window.py
 
@@ -1542,6 +1588,10 @@ class MainWindow(QMainWindow):
         return query
 
     def closeEvent(self, event): # Kill server when app window is closed (closeEvent default Qt method)
+        if self.search_thread is not None and self.search_thread.isRunning():
+            self.search_cancelled = True
+            self.search_thread.wait(3000)
+
         for window in self.projects_window.open_windows.values():
             window.close()
 
