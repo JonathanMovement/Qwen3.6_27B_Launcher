@@ -1,9 +1,9 @@
-## -- Local Qwen --
+# -- Local Qwen --
 A Windows desktop chat app that runs Qwen3.6-27B entirely on your own PC through llama.cpp, with optional private web search through a self-hosted SearXNG instance.
 
 No accounts, no API keys, no cloud. Your chats stay in a folder on your drive.
 
-Below are some screenshots of the final app:
+![Launcher animated](Launcher_animation.gif)
 ![Initial load - Dark Mode](image.png)
 ![Initial load - Light Mode](image-1.png)
 ![Settings](image-2.png)
@@ -20,6 +20,15 @@ Below are some screenshots of the final app:
 - Proper formatting - Markdown with syntax-highlighted code blocks, tables and lists.
 - Dark and light themes
 - Adjustable settings - context length, GPU/CPU placement and response length, with built-in help behind the ? button.
+- Thinking mode - toggle step-by-step reasoning for logic and code questions (slower, needs Max Response Tokens 4096+)
+- Generation speed - live tokens-per-second in the top bar while the model writes.
+
+## Known limitations
+- Windows only.
+- Replies appear when they're finished, not word by word.
+- Settings aren't saved between sessions.
+- The model handles one request at a time. If two windows send at once, the second one waits.
+- Online mode can't read sites that need JavaScript or block bots (e.g. SteamDB).
 
 ## -- Hardware --
 The app and model choice are tuned for an NVIDIA RTX 5070 (12 GB VRAM):
@@ -29,7 +38,7 @@ Qwen3.6-27B, UD-IQ3_XXS quant (~10.5GB)
 Vision projector (mmproj-F16) (~1.1GB)
 
 Cards with similar or more VRAM (RTX 4070 Ti, RTX 5060 Ti 16 GB, RTX 4080 and up) work the same way. More VRAM lets you use a longer context and vision without slowing down. With less VRAM, part of the model moves to system RAM and the CPU, and generation gets much slower.
-On the RTX 5070 used for development, generation runs at roughly 10-12 tokens per second in Auto mode with vision off.
+On the RTX 5070 used for development, generation runs at roughly 10-13 tokens per second in Auto mode with vision off.
 
 ## -- Requirements --
 - Windows 10 or 11
@@ -41,9 +50,11 @@ On the RTX 5070 used for development, generation runs at roughly 10-12 tokens pe
 ## 1. Get the app
 #### Clone the repository (or download it as a ZIP):
 ```bash
-git clone https://github.com/<your-username>/<repo-name>.git
+git clone https://github.com/JonathanMovement/Qwen3.6_27B_Launcher.git
 ```
 ## 2. Download llama.cpp
+- Open the [llama.cpp releases page](https://github.com/ggml-org/llama.cpp/releases) and expand **Assets** under the latest release.
+
 - Download the Windows CUDA build (`llama-<version>-bin-win-cuda-<cuda-version>-x64.zip`) and the matching
 CUDA runtime (`cudart-...-x64.zip`). RTX 50-series cards need a CUDA 12.8 or newer build.
 
@@ -60,7 +71,7 @@ From unsloth/Qwen3.6-27B-GGUF on Hugging Face, download these two files into Loc
 LocalQwen.exe
 Icons-Pictures\
 SearXNG\
-docker-compose.yml
+    docker-compose.yml
 LocalLLM\
     backend_13.3\
         llama-server.exe
@@ -79,14 +90,14 @@ docker compose up -d
 
 The first start downloads the images and creates SearXNG\searxng\settings.yml.
 Give it about 30 seconds and open settings.yml, find formats: under search: and add json:
-```bash
+```yaml
 search:
      formats:
        - html
        - json
 ```
 
-Without this, every earch fails with 403 Forbidden.
+Without this, every search fails with ***403 Forbidden***.
 
 From now on the app starts and stops SearXNG by itself when you tick Online mode.
 Docker Desktop just has to be running.
@@ -117,12 +128,15 @@ The result is in dist\LocalQwen.exe, cut the exe and move it in the main folder 
 
 The .exe contains only the app itself. The models, llama.cpp and SearXNG stay in their own folders next to it.
 
+**If you wish to run a different model, you will have to do a few modifications to the files.**
+
+What to change:
+`the -m model path in start_llama_server and self.mmproj_path in MainWindow.__init__, both in main.py`
+
 ## -- Privacy --
 The model runs on your machine. Nothing you type is sent anywhere unless Online mode is on.
 Chats are saved as JSON in chats\ and projects in projects\. Both are excluded from Git.
 In Online mode, only the search query leaves your PC. Your own SearXNG instance sends it to the search engines, which see the query and your IP address, but no account or tracking cookies.
-
-If you wish to run a different model, you will have to do a few modifications to the files.
 
 ## -- Built with -- 
 - PyQt5 - user interface

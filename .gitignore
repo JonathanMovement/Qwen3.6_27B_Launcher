@@ -25,3 +25,7 @@ dist/
 *.spec
 *.exe
 llama-server.log
+
+# Virtual environments
+venv/
+.venv/

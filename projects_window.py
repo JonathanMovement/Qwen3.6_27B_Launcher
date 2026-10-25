@@ -527,8 +527,3 @@ class ProjectChatWindow(QMainWindow):
                     pass
     
             event.accept()
-
-
-
-
-
