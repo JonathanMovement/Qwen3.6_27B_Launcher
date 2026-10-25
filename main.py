@@ -148,6 +148,8 @@ class TopBar(QWidget):
         self.title_label = QLabel("Local Qwen")
         self.title_label.setObjectName("appTitle")
         self.projects_button = QPushButton("Projects")
+        self.speed_label = QLabel("")
+        self.speed_label.setVisible(False) # first invisible, appears with the first answer
         self.vision_button = QCheckBox("Enable Vision")
         self.vision_button.setChecked(False)
         self.vision_button.setToolTip("Loads the vision projector (~1.1 GB Vram). Restarts the model.")
@@ -166,6 +168,7 @@ class TopBar(QWidget):
         layout.addWidget(self.menu_button)
         layout.addWidget(self.title_label)
         layout.addWidget(self.projects_button)
+        layout.addWidget(self.speed_label)
         layout.addStretch()
         layout.addWidget(self.think_toggle)
         layout.addWidget(self.vision_button)
@@ -583,6 +586,7 @@ class ServerStartThread(QThread):
 
 class InferenceThread(QThread):
     result_ready = pyqtSignal(str, str) # (answer, chat_id)
+    speed = pyqtSignal(float) # tokens per second while generating
 
     def __init__(self, messages, max_tokens, chat_id, thinking=False):
         super().__init__()
@@ -627,6 +631,10 @@ class InferenceThread(QThread):
         }
 
         pieces = []
+        generated = 0 # streamed pieces, roughly one per token
+        start = None
+        last_report = 0.0
+        server_timing = False
         response = None
 
         try:
@@ -652,12 +660,29 @@ class InferenceThread(QThread):
                     chunk = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
+
+                timings = chunk.get("timings") # llama-server's own measurement, sent at the end
+                if timings and timings.get("predicted_per_second"):
+                    self.speed.emit(float(timings["predicted_per_second"]))
+                    server_timing = True
+
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue
-                piece = choices[0].get("delta", {}).get("content")
+                delta = choices[0].get("delta") or {}
+                piece = delta.get("content")
                 if piece:
                     pieces.append(piece)
+
+                if piece or delta.get("reasoning_content"): # thinking tokens count too
+                    generated += 1
+                    now = time.time()
+                    if start is None:
+                        start = now
+                        last_report = now
+                    elif now -last_report >= 0.5 and not server_timing:
+                        last_report = now
+                        self.speed.emit((generated - 1) / (now - start))
 
             text = "".join(pieces)
 
@@ -1181,8 +1206,13 @@ class MainWindow(QMainWindow):
         if self.top_bar.think_toggle.isChecked():
             self.chat_area.add_message("system", "Thinking mode on - the answer can take a few minutes")
         self.inference_thread = InferenceThread(messages, self.model_settings["max_tokens"], chat_id, self.top_bar.think_toggle.isChecked())
+        self.inference_thread.speed.connect(self.show_speed)
         self.inference_thread.result_ready.connect(self.on_response)
         self.inference_thread.start()
+
+    def show_speed(self, tokens_per_second):
+        self.top_bar.speed_label.setText(f"Generation speed - {tokens_per_second:.1f} tk/s")
+        self.top_bar.speed_label.setVisible(True)
 
     def stop_generation(self):
         if self.search_thread is not None and self.search_thread.isRunning():

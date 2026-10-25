@@ -178,6 +178,8 @@ class ProjectChatWindow(QMainWindow):
 
         self.name_label = QLabel()
         self.instructions_button = QPushButton("Instructions")
+        self.speed_label = QLabel("")
+        self.speed_label.setVisible(False) # appears with the first answer
         self.vision_toggle = QCheckBox("Enable Vision")
         self.online_label = QLabel("Online mode: OFF")
 
@@ -192,6 +194,7 @@ class ProjectChatWindow(QMainWindow):
         top_layout = QHBoxLayout()
         top_layout.addWidget(self.name_label)
         top_layout.addStretch()
+        top_layout.addWidget(self.speed_label)
         top_layout.addWidget(self.instructions_button)
         top_layout.addWidget(self.vision_toggle)
         top_layout.addWidget(self.online_label)
@@ -448,8 +451,13 @@ class ProjectChatWindow(QMainWindow):
             self.chat_area.add_message("system", "Thinking mode on - the answer can take a few minutes.")
 
         self.inference_thread = self.host.new_inference_thread(messages, self.project_id)
+        self.inference_thread.speed.connect(self.show_speed)
         self.inference_thread.result_ready.connect(self.on_response)
         self.inference_thread.start()
+
+    def show_speed(self, tokens_per_second):
+        self.speed_label.setText(f"Generation speed - {tokens_per_second:.1f} tk/s")
+        self.speed_label.setVisible(True)
 
     def stop_generation(self):
         if self.search_thread is not None and self.search_thread.isRunning():
